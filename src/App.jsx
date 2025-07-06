@@ -1,265 +1,88 @@
-import React, { useState, useEffect, useRef } from "react";
-// Importujeme auth a db z našeho souboru firebase.js
-import { auth, db } from './firebase';
-// Importujeme potřebné funkce z Firebase Authentication a Firestore
-import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
-import {
-  collection,
-  query,
-  onSnapshot,
-  doc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  Timestamp,
-  orderBy
-} from "firebase/firestore";
-
-// Funkce pro převod souboru na base64 (ponechána beze změny)
-const fileToBase64 = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]); // Získejte base64 řetězec po "data:image/png;base64,"
-    reader.onerror = error => reject(error);
-  });
-};
+import React, { useState, useEffect } from "react";
 
 // Hlavní komponenta aplikace
 function App() {
-  // Stavy pro Firebase a autentizaci
-  const [userId, setUserId] = useState(null);
-  const [loadingFirebase, setLoadingFirebase] = useState(true);
-  const [firebaseError, setFirebaseError] = useState(null);
-
-  // Stavy pro data a UI
-  const [contacts, setContacts] = useState([]);
-  const [newContactName, setNewContactName] = useState('');
-  const [newContactEmail, setNewContactEmail] = useState('');
-  const [newContactLinkedin, setNewContactLinkedin] = useState('');
-  const [newContactNotes, setNewContactNotes] = useState('');
-  const [newContactImageFile, setNewContactImageFile] = useState(null);
-  const [isAddingContact, setIsAddingContact] = useState(false);
+  // Obecné stavy pro UI (zatím)
   const [loading, setLoading] = useState(false);
-  const [editingContact, setEditingContact] = useState(null);
-  const [selectedContact, setSelectedContact] = useState(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [error, setError] = useState(null); // Připraveno pro případné chyby z Make
 
-  const fileInputRef = useRef(null);
+  // Zde budou stavy pro vstup uživatele (příkaz pro AI) a výstup AI
+  const [userInput, setUserInput] = useState('');
+  const [aiResponse, setAiResponse] = useState('Dobrý den! Jsem váš AI asistent pro plánování výroby. Jak vám mohu pomoci?');
 
-  // Autentizace uživatele anonymně a nastavení userId
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setUserId(user.uid);
-        console.log("Přihlášen jako anonymní uživatel:", user.uid);
-      } else {
-        signInAnonymously(auth)
-          .then((userCredential) => {
-            setUserId(userCredential.user.uid);
-            console.log("Přihlášen anonymně nově:", userCredential.user.uid);
-          })
-          .catch((error) => {
-            setFirebaseError(error.message);
-            console.error("Chyba při anonymním přihlášení:", error);
-          });
-      }
-      setLoadingFirebase(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Načítání kontaktů z Firestore
-  useEffect(() => {
-    if (!userId) return;
-
-    setLoadingFirebase(true);
-    const q = query(collection(db, `users/${userId}/contacts`));
-    // const q = query(collection(db, "testcollection"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const updatedContacts = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setContacts(updatedContacts);
-      console.log("Načtené kontakty (celé pole):", updatedContacts); // <--- ZDE JE NOVÝ LOG
-      setLoadingFirebase(false);
-    }, (error) => {
-      setFirebaseError(error.message);
-      console.error("Chyba při načítání kontaktů:", error);
-      setLoadingFirebase(false);
-    });
-
-    return () => unsubscribe();
-  }, [userId]);
-
-  // Funkce pro přidání kontaktu
-  const handleAddContact = async (e) => {
-    e.preventDefault();
+  // Příklad funkce pro odeslání požadavku na Make
+  const sendToMake = async () => {
     setLoading(true);
-    setFirebaseError(null);
-
-    if (!newContactName || !newContactEmail) {
-      setFirebaseError("Jméno a email jsou povinné.");
-      setLoading(false);
-      return;
-    }
+    setError(null);
+    setAiResponse('Přemýšlím...'); // Indikace, že AI pracuje
 
     try {
-      let base64ImageString = '';
-      if (newContactImageFile) {
-        base64ImageString = await fileToBase64(newContactImageFile);
-      }
+      // Zde bude URL vašeho Make Webhooku
+      const makeWebhookUrl = 'https://hook.eu1.make.com/wonkykm9tztt7qqfbbqp9pnsgxf2zvl5';
 
-      await addDoc(collection(db, `users/${userId}/contacts`), {
-        name: newContactName,
-        email: newContactEmail,
-        linkedin: newContactLinkedin,
-        notes: newContactNotes,
-        image: base64ImageString, // Ukládáme Base64 řetězec
-        createdAt: Timestamp.now(),
+      const response = await fetch(makeWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ command: userInput }), // Pošlete příkaz uživatele
       });
 
-      // Reset formuláře
-      setNewContactName('');
-      setNewContactEmail('');
-      setNewContactLinkedin('');
-      setNewContactNotes('');
-      setNewContactImageFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+      if (!response.ok) {
+        throw new Error(`HTTP chyba! Status: ${response.status}`);
       }
-      setIsAddingContact(false); // Zavře formulář pro přidání
-    } catch (error) {
-      setFirebaseError(error.message);
-      console.error("Chyba při přidávání kontaktu:", error);
+
+      const data = await response.json();
+      // Předpokládáme, že Make vrátí objekt s "message" nebo "plan"
+      setAiResponse(data.message || JSON.stringify(data, null, 2)); // Zobrazí odpověď nebo celý JSON
+
+    } catch (err) {
+      setError(`Chyba při komunikaci s Make: ${err.message}`);
+      setAiResponse('Omlouvám se, nastala chyba.');
+      console.error("Chyba při volání Make:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Funkce pro zahájení úprav kontaktu
-  const startEditContact = (contact) => {
-    setEditingContact(contact);
-    setNewContactName(contact.name);
-    setNewContactEmail(contact.email);
-    setNewContactLinkedin(contact.linkedin || '');
-    setNewContactNotes(contact.notes || '');
-    setNewContactImageFile(null); // Reset pro obrázek při úpravě
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
+  // Základní UI pro interakci s AI asistentem
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
+      <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg">
+        <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">AI Asistent Výroba</h1>
 
-  // Funkce pro aktualizaci kontaktu
-  const handleUpdateContact = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setFirebaseError(null);
+        {/* Oblast pro zobrazení odpovědí AI */}
+        <div className="bg-gray-50 p-4 rounded-lg mb-4 h-40 overflow-y-auto border border-gray-200">
+          <p className="text-gray-700 whitespace-pre-wrap">{aiResponse}</p>
+          {error && <p className="text-red-500 mt-2">{error}</p>}
+        </div>
 
-    if (!newContactName || !newContactEmail) {
-      setFirebaseError("Jméno a email jsou povinné.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const contactRef = doc(db, `users/${userId}/contacts`, editingContact.id);
-      let updatedImageData = editingContact.image; // Zachování stávajícího obrázku
-
-      if (newContactImageFile) {
-        // Pouze pokud byl vybrán nový obrázek
-        updatedImageData = await fileToBase64(newContactImageFile);
-      }
-
-      await updateDoc(contactRef, {
-        name: newContactName,
-        email: newContactEmail,
-        linkedin: newContactLinkedin,
-        notes: newContactNotes,
-        image: updatedImageData, // Ukládáme Base64 řetězec
-        updatedAt: Timestamp.now(),
-      });
-
-      // Reset formuláře a stavů
-      setEditingContact(null);
-      setNewContactName('');
-      setNewContactEmail('');
-      setNewContactLinkedin('');
-      setNewContactNotes('');
-      setNewContactImageFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    } catch (error) {
-      setFirebaseError(error.message);
-      console.error("Chyba při aktualizaci kontaktu:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Funkce pro zrušení úprav
-  const cancelEditContact = () => {
-    setEditingContact(null);
-    setNewContactName('');
-    setNewContactEmail('');
-    setNewContactLinkedin('');
-    setNewContactNotes('');
-    setNewContactImageFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  // Funkce pro zahájení mazání kontaktu
-  const startDeleteContact = (contact) => {
-    setSelectedContact(contact);
-    setShowDeleteConfirm(true);
-  };
-
-  // Funkce pro potvrzení mazání kontaktu
-  const handleDeleteContactConfirmed = async () => {
-    if (!selectedContact) return;
-
-    setLoading(true);
-    setFirebaseError(null);
-    try {
-      await deleteDoc(doc(db, `users/${userId}/contacts`, selectedContact.id));
-      setSelectedContact(null);
-      setShowDeleteConfirm(false);
-    } catch (error) {
-      setFirebaseError(error.message);
-      console.error("Chyba při mazání kontaktu:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Funkce pro zrušení mazání
-  const cancelDeleteContact = () => {
-    setSelectedContact(null);
-    setShowDeleteConfirm(false);
-  };
-
-  if (loadingFirebase) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <p className="text-gray-700 text-lg">Načítám Firebase...</p>
+        {/* Vstupní pole pro uživatele */}
+        <div className="flex space-x-2">
+          <input
+            type="text"
+            className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Zadejte příkaz pro AI asistenta..."
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            onKeyPress={(e) => { // Umožní odeslat příkaz stiskem Enter
+              if (e.key === 'Enter') {
+                sendToMake();
+              }
+            }}
+            disabled={loading}
+          />
+          <button
+            onClick={sendToMake}
+            className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-lg shadow-md hover:from-blue-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition ease-in-out duration-150"
+            disabled={loading}
+          >
+            {loading ? 'Odesílám...' : 'Odeslat'}
+          </button>
+        </div>
       </div>
-    );
-  }
-
-  if (firebaseError) {
-    console.error("Chyba Firebase:", firebaseError); // Přidáme log pro debug
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-red-100">
-        <p className="text-red-700 text-lg">
-          Nastala chyba při načítání dat: {firebaseError.message || "Neznámá chyba."}
-        </p>
-      </div>
-    );
-  }
+    </div>
+  );
 }
-export default App; // <--- TOTO MUSÍ BÝT HNED POD UZAVÍRACÍ ZÁVORKOU FUNKCE
+
+export default App;
